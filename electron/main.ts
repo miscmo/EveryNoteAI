@@ -77,8 +77,12 @@ app.whenReady().then(async () => {
   createWindow()
 
   app.on('activate', () => {
+    // macOS: 点击 dock 图标时，如果没有窗口则创建新窗口
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
+    } else {
+      // 如果窗口存在但被隐藏，则显示它
+      mainWindow?.show()
     }
   })
 })
@@ -100,8 +104,11 @@ function safeLog(message: string) {
  */
 app.on('window-all-closed', () => {
   safeLog('All windows closed, saving database...')
-  closeDatabase()
-  if (process.platform !== 'darwin') {
+  // macOS 下只保存数据库，不关闭，因为应用可能会被重新激活
+  if (process.platform === 'darwin') {
+    saveDatabase()
+  } else {
+    closeDatabase()
     app.quit()
   }
 })
