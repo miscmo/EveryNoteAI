@@ -28,14 +28,13 @@
       </div>
     </div>
 
-    <!-- Bubble Menu (Floating Toolbar) -->
-    <BubbleMenu 
-      v-if="editor" 
-      :editor="editor" 
-      :tippy-options="{ duration: 150 }"
-      class="bubble-menu"
+    <!-- Floating Toolbar -->
+    <div 
+      v-if="showToolbar"
+      class="floating-toolbar"
+      :style="toolbarPosition"
     >
-      <div class="bubble-menu-group">
+      <div class="toolbar-group">
         <button 
           @click="editor?.chain().focus().toggleBold().run()"
           :class="{ active: editor?.isActive('bold') }"
@@ -89,8 +88,8 @@
           </svg>
         </button>
       </div>
-      <div class="bubble-menu-divider"></div>
-      <div class="bubble-menu-group">
+      <div class="toolbar-divider"></div>
+      <div class="toolbar-group">
         <button 
           @click="editor?.chain().focus().toggleHighlight().run()"
           :class="{ active: editor?.isActive('highlight') }"
@@ -112,7 +111,7 @@
           </svg>
         </button>
       </div>
-    </BubbleMenu>
+    </div>
 
     <!-- Block Drag Handle -->
     <div 
@@ -137,8 +136,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useEditor, EditorContent, BubbleMenu } from '@tiptap/vue-3'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Typography from '@tiptap/extension-typography'
@@ -150,10 +149,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
-import Table from '@tiptap/extension-table'
-import TableRow from '@tiptap/extension-table-row'
-import TableCell from '@tiptap/extension-table-cell'
-import TableHeader from '@tiptap/extension-table-header'
+import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
 import { common, createLowlight } from 'lowlight'
 
 const lowlight = createLowlight(common)
@@ -177,6 +173,10 @@ const showSlashMenu = ref(false)
 const slashMenuPosition = ref({ top: '0px', left: '0px' })
 const slashQuery = ref('')
 const selectedIndex = ref(0)
+
+// Floating toolbar state
+const showToolbar = ref(false)
+const toolbarPosition = ref({ top: '0px', left: '0px' })
 
 // Drag handle state
 const showDragHandle = ref(false)
@@ -300,7 +300,7 @@ const editor = useEditor({
   content: props.modelValue,
   extensions: [
     StarterKit.configure({
-      codeBlock: false, // Use CodeBlockLowlight instead
+      codeBlock: false,
     }),
     Placeholder.configure({
       placeholder: ({ node }) => {
@@ -345,7 +345,6 @@ const editor = useEditor({
       spellcheck: 'false',
     },
     handleKeyDown: (view, event) => {
-      // Handle slash menu
       if (showSlashMenu.value) {
         if (event.key === 'ArrowDown') {
           event.preventDefault()
@@ -377,6 +376,10 @@ const editor = useEditor({
     const html = editor.getHTML()
     emit('update:modelValue', html)
   },
+  onSelectionUpdate: ({ editor }) => {
+    updateToolbar(editor)
+    updateDragHandle()
+  },
 })
 
 // Watch for external content changes
@@ -385,6 +388,28 @@ watch(() => props.modelValue, (newValue) => {
     editor.value.commands.setContent(newValue, false)
   }
 })
+
+// Toolbar functions
+function updateToolbar(editorInstance: any) {
+  const { from, to, empty } = editorInstance.state.selection
+  
+  if (empty || from === to) {
+    showToolbar.value = false
+    return
+  }
+  
+  const coords = editorInstance.view.coordsAtPos(from)
+  const containerRect = editorContainer.value?.getBoundingClientRect()
+  
+  if (containerRect) {
+    toolbarPosition.value = {
+      top: `${coords.top - containerRect.top - 50}px`,
+      left: `${coords.left - containerRect.left}px`,
+    }
+  }
+  
+  showToolbar.value = true
+}
 
 // Slash menu functions
 function openSlashMenu() {
@@ -415,7 +440,6 @@ function closeSlashMenu() {
 function executeCommand(item: typeof slashCommands[0]) {
   if (!editor.value) return
   
-  // Delete the slash character
   const { from } = editor.value.state.selection
   const textBefore = editor.value.state.doc.textBetween(Math.max(0, from - 20), from)
   const slashIndex = textBefore.lastIndexOf('/')
@@ -472,18 +496,16 @@ function updateDragHandle() {
 }
 
 function startDrag(event: MouseEvent) {
-  // TODO: Implement drag and drop
   console.log('Start drag', event)
 }
 
 // Listen for slash key
 onMounted(() => {
   if (editor.value) {
-    editor.value.on('update', ({ editor }) => {
-      const { from } = editor.state.selection
-      const textBefore = editor.state.doc.textBetween(Math.max(0, from - 20), from)
+    editor.value.on('update', ({ editor: editorInstance }) => {
+      const { from } = editorInstance.state.selection
+      const textBefore = editorInstance.state.doc.textBetween(Math.max(0, from - 20), from)
       
-      // Check for slash at the start of a line or after space
       const match = textBefore.match(/(?:^|\s)\/([^\s]*)$/)
       
       if (match) {
@@ -496,10 +518,6 @@ onMounted(() => {
         closeSlashMenu()
       }
       
-      updateDragHandle()
-    })
-    
-    editor.value.on('selectionUpdate', () => {
       updateDragHandle()
     })
   }
@@ -545,7 +563,6 @@ onUnmounted(() => {
       margin-top: 0.75em;
     }
     
-    // Placeholder
     p.is-editor-empty:first-child::before {
       content: attr(data-placeholder);
       float: left;
@@ -563,7 +580,6 @@ onUnmounted(() => {
     }
   }
   
-  // Headings
   h1 {
     font-size: 2em;
     font-weight: 700;
@@ -596,13 +612,11 @@ onUnmounted(() => {
     color: var(--text-primary);
   }
   
-  // Paragraphs
   p {
     margin: 0 0 16px;
     color: var(--text-primary);
   }
   
-  // Links
   a {
     color: var(--primary);
     text-decoration: none;
@@ -613,7 +627,6 @@ onUnmounted(() => {
     }
   }
   
-  // Inline Code
   code:not(pre code) {
     font-family: 'SF Mono', 'Fira Code', monospace;
     font-size: 0.9em;
@@ -623,7 +636,6 @@ onUnmounted(() => {
     color: var(--text-primary);
   }
   
-  // Code Block
   pre {
     padding: 16px;
     background: var(--bg-secondary);
@@ -641,7 +653,6 @@ onUnmounted(() => {
     }
   }
   
-  // Blockquote
   blockquote {
     margin: 0 0 16px;
     padding: 0 16px;
@@ -653,7 +664,6 @@ onUnmounted(() => {
     }
   }
   
-  // Lists
   ul, ol {
     padding-left: 24px;
     margin: 0 0 16px;
@@ -672,7 +682,6 @@ onUnmounted(() => {
     }
   }
   
-  // Task list
   ul[data-type="taskList"] {
     list-style: none;
     padding-left: 0;
@@ -700,7 +709,6 @@ onUnmounted(() => {
     }
   }
   
-  // Table
   table {
     width: 100%;
     border-collapse: collapse;
@@ -727,14 +735,12 @@ onUnmounted(() => {
     }
   }
   
-  // Horizontal rule
   hr {
     border: none;
     border-top: 2px solid var(--border-light);
     margin: 24px 0;
   }
   
-  // Image
   img {
     max-width: 100%;
     border-radius: 8px;
@@ -746,7 +752,6 @@ onUnmounted(() => {
     }
   }
   
-  // Strong & emphasis
   strong {
     font-weight: 600;
     color: var(--text-primary);
@@ -757,20 +762,17 @@ onUnmounted(() => {
     color: var(--text-primary);
   }
   
-  // Strikethrough
   s {
     text-decoration: line-through;
     color: var(--text-secondary);
   }
   
-  // Highlight
   mark {
     background-color: #fef08a;
     padding: 2px 0;
   }
 }
 
-// Slash Menu
 .slash-menu {
   position: absolute;
   z-index: 1000;
@@ -866,8 +868,9 @@ onUnmounted(() => {
   }
 }
 
-// Bubble Menu
-.bubble-menu {
+.floating-toolbar {
+  position: absolute;
+  z-index: 1000;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -889,13 +892,13 @@ onUnmounted(() => {
     }
   }
   
-  .bubble-menu-group {
+  .toolbar-group {
     display: flex;
     align-items: center;
     gap: 2px;
   }
   
-  .bubble-menu-divider {
+  .toolbar-divider {
     width: 1px;
     height: 20px;
     background: var(--border-light);
@@ -928,7 +931,6 @@ onUnmounted(() => {
   }
 }
 
-// Drag Handle
 .drag-handle {
   position: absolute;
   z-index: 100;
@@ -957,13 +959,11 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-// Selection styles
 .ProseMirror-selectednode {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
-// Gapcursor
 .ProseMirror-gapcursor {
   display: none;
   pointer-events: none;
