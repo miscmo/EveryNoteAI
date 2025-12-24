@@ -295,8 +295,6 @@ watch(() => props.draggingItem, (newVal) => {
 </script>
 
 <style lang="scss" scoped>
-@import "@/styles/variables.scss";
-
 .tree-node {
   margin-bottom: 1px;
   position: relative;

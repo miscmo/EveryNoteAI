@@ -1181,8 +1181,6 @@ watch([expandedNotebooks, expandedFolders], () => {
 </script>
 
 <style lang="scss" scoped>
-@import "@/styles/variables.scss";
-
 .sidebar {
   width: var(--sidebar-width, 280px);
   min-width: 200px;

@@ -484,8 +484,6 @@ async function handleAIAction(action: string, content: string) {
 </script>
 
 <style lang="scss" scoped>
-@import "@/styles/variables.scss";
-
 .home-layout {
   display: flex;
   width: 100%;
