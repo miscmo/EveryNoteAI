@@ -87,6 +87,37 @@ interface ConfigData {
   exportedAt: string
 }
 
+interface NotebookConflict {
+  id: string
+  local: Notebook
+  remote: Notebook
+}
+
+interface FolderConflict {
+  id: string
+  local: Folder
+  remote: Folder
+}
+
+interface TagConflict {
+  id: string
+  local: Tag
+  remote: Tag
+}
+
+interface SettingConflict {
+  key: string
+  localValue: any
+  remoteValue: any
+}
+
+interface ConfigConflicts {
+  notebooks: NotebookConflict[]
+  folders: FolderConflict[]
+  tags: TagConflict[]
+  settings: SettingConflict[]
+}
+
 // ==================== GitHub 同步服务类 ====================
 
 export class GitHubSync {
@@ -321,9 +352,31 @@ export class GitHubSync {
     try {
       await this.ensureRepoExists()
       
+      // 如果远程已经有配置，而本地还没有有效配置，优先从远程拉取，避免覆盖远程数据
+      const owner = this.store.get('github.owner', '') as string
+      const repo = this.store.get('github.repo', '') as string
+      let remoteHasConfig = false
+      try {
+        const { data } = await this.octokit!.repos.getContent({ owner, repo, path: 'config/data.json' })
+        if (!Array.isArray(data) && data.type === 'file') {
+          remoteHasConfig = true
+        }
+      } catch (error: any) {
+        if (error.status !== 404) {
+          throw error
+        }
+      }
+      
+      if (remoteHasConfig) {
+        // 远程有配置：
+        // - 本地是新设备/空配置：等同于第一次在本机使用，先全部拉取
+        // - 本地已有配置：先拉取合并，再推送，行为更接近 git pull + push
+        await this.pullFromGitHub()
+      }
+      
       let syncedCount = 0
       
-      // 1. 同步配置数据
+      // 1. 同步配置数据（将当前本地状态写回 GitHub）
       await this.syncConfig()
       syncedCount++
       
@@ -504,63 +557,173 @@ export class GitHubSync {
       let newNotes = 0
       let updatedNotes = 0
       
-      // 1. 拉取配置
+      // 1. 拉取配置并检测冲突
+      let configData: ConfigData | null = null
       try {
-        const { data } = await this.octokit!.repos.getContent({
-          owner, repo, path: 'config/data.json'
-        })
-        
+        const { data } = await this.octokit!.repos.getContent({ owner, repo, path: 'config/data.json' })
         if (!Array.isArray(data) && data.type === 'file' && data.content) {
           const content = Buffer.from(data.content, 'base64').toString('utf-8')
-          const configData: ConfigData = JSON.parse(content)
-          
-          // 合并笔记本（包括更新时间）
-          for (const notebook of configData.notebooks) {
-            const existing = queryOne('SELECT * FROM notebooks WHERE id = ?', [notebook.id])
-            if (!existing) {
-              runQuery(
-                'INSERT INTO notebooks (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
-                [notebook.id, notebook.name, notebook.created_at, notebook.updated_at]
-              )
-            } else if (new Date(notebook.updated_at) > new Date(existing.updated_at)) {
-              // 更新笔记本名称
-              runQuery(
-                'UPDATE notebooks SET name = ?, updated_at = ? WHERE id = ?',
-                [notebook.name, notebook.updated_at, notebook.id]
-              )
-            }
-          }
-          
-          // 合并文件夹（包括排序）
-          for (const folder of configData.folders) {
-            const existing = queryOne('SELECT * FROM folders WHERE id = ?', [folder.id])
-            if (!existing) {
-              runQuery(
-                'INSERT INTO folders (id, name, notebook_id, parent_id, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [folder.id, folder.name, folder.notebook_id, folder.parent_id, folder.sort_order, folder.created_at, folder.updated_at]
-              )
-            } else if (new Date(folder.updated_at) > new Date(existing.updated_at)) {
-              // 更新文件夹（包括排序和父级）
-              runQuery(
-                'UPDATE folders SET name = ?, parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?',
-                [folder.name, folder.parent_id, folder.sort_order, folder.updated_at, folder.id]
-              )
-            }
-          }
-          
-          // 合并标签
-          for (const tag of configData.tags) {
-            const existing = queryOne('SELECT * FROM tags WHERE id = ?', [tag.id])
-            if (!existing) {
-              runQuery(
-                'INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)',
-                [tag.id, tag.name, tag.created_at]
-              )
+          configData = JSON.parse(content) as ConfigData
+        }
+      } catch (error: any) {
+        if (error.status !== 404) {
+          throw error
+        }
+      }
+      
+      if (configData) {
+        // 本地配置快照
+        const localNotebooks = queryAll('SELECT * FROM notebooks ORDER BY created_at') as Notebook[]
+        const localFolders = queryAll('SELECT * FROM folders ORDER BY sort_order') as Folder[]
+        const localTags = queryAll('SELECT * FROM tags ORDER BY name') as Tag[]
+        const localSettings = {
+          darkMode: this.store.get('appearance.darkMode'),
+          fontSize: this.store.get('appearance.fontSize'),
+          editorMode: this.store.get('appearance.editorMode'),
+          autoSave: this.store.get('editor.autoSave')
+        }
+        
+        type NotebookConflict = { id: string; local: Notebook; remote: Notebook }
+        type FolderConflict = { id: string; local: Folder; remote: Folder }
+        type TagConflict = { id: string; local: Tag; remote: Tag }
+        type SettingConflict = { key: string; localValue: any; remoteValue: any }
+        
+        const conflicts: {
+          notebooks: NotebookConflict[]
+          folders: FolderConflict[]
+          tags: TagConflict[]
+          settings: SettingConflict[]
+        } = {
+          notebooks: [],
+          folders: [],
+          tags: [],
+          settings: []
+        }
+        
+        const localNotebookMap = new Map(localNotebooks.map(n => [n.id, n]))
+        for (const remoteNb of configData.notebooks) {
+          const local = localNotebookMap.get(remoteNb.id)
+          if (local) {
+            if (local.name !== remoteNb.name || local.updated_at !== remoteNb.updated_at) {
+              conflicts.notebooks.push({ id: remoteNb.id, local, remote: remoteNb })
             }
           }
         }
-      } catch {
-        // 配置文件不存在
+        
+        const localFolderMap = new Map(localFolders.map(f => [f.id, f]))
+        for (const remoteFolder of configData.folders) {
+          const local = localFolderMap.get(remoteFolder.id)
+          if (local) {
+            if (
+              local.name !== remoteFolder.name ||
+              local.parent_id !== remoteFolder.parent_id ||
+              local.sort_order !== remoteFolder.sort_order ||
+              local.updated_at !== remoteFolder.updated_at
+            ) {
+              conflicts.folders.push({ id: remoteFolder.id, local, remote: remoteFolder })
+            }
+          }
+        }
+        
+        const localTagMap = new Map(localTags.map(t => [t.id, t]))
+        for (const remoteTag of configData.tags) {
+          const local = localTagMap.get(remoteTag.id)
+          if (local && local.name !== remoteTag.name) {
+            conflicts.tags.push({ id: remoteTag.id, local, remote: remoteTag })
+          }
+        }
+        
+        // 设置冲突（仅在双方都有值且不相等时标记）
+        if (configData.settings) {
+          const keys: (keyof typeof localSettings)[] = ['darkMode', 'fontSize', 'editorMode', 'autoSave']
+          for (const key of keys) {
+            const remoteValue = (configData.settings as any)[key]
+            const localValue = (localSettings as any)[key]
+            if (remoteValue !== undefined && localValue !== undefined && remoteValue !== localValue) {
+              conflicts.settings.push({ key, localValue, remoteValue })
+            }
+          }
+        }
+        
+        const hasConflicts =
+          conflicts.notebooks.length > 0 ||
+          conflicts.folders.length > 0 ||
+          conflicts.tags.length > 0 ||
+          conflicts.settings.length > 0
+        
+        if (hasConflicts) {
+          this.store.set('github.configConflicts', conflicts)
+          this.updateSyncStatus('error', '检测到配置冲突，请在设置页手动解决后再重试拉取')
+          return {
+            success: false,
+            message: '检测到配置冲突，请在设置页手动解决后再重试拉取',
+            pulledNotes: 0,
+            newNotes: 0,
+            updatedNotes: 0
+          }
+        }
+        
+        // 没有冲突时，按原有逻辑合并配置数据
+        // 合并笔记本（包括更新时间）
+        for (const notebook of configData.notebooks) {
+          const existing = queryOne('SELECT * FROM notebooks WHERE id = ?', [notebook.id])
+          if (!existing) {
+            runQuery(
+              'INSERT INTO notebooks (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+              [notebook.id, notebook.name, notebook.created_at, notebook.updated_at]
+            )
+          } else if (new Date(notebook.updated_at) > new Date(existing.updated_at)) {
+            // 更新笔记本名称
+            runQuery(
+              'UPDATE notebooks SET name = ?, updated_at = ? WHERE id = ?',
+              [notebook.name, notebook.updated_at, notebook.id]
+            )
+          }
+        }
+        
+        // 合并文件夹（包括排序）
+        for (const folder of configData.folders) {
+          const existing = queryOne('SELECT * FROM folders WHERE id = ?', [folder.id])
+          if (!existing) {
+            runQuery(
+              'INSERT INTO folders (id, name, notebook_id, parent_id, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              [folder.id, folder.name, folder.notebook_id, folder.parent_id, folder.sort_order, folder.created_at, folder.updated_at]
+            )
+          } else if (new Date(folder.updated_at) > new Date(existing.updated_at)) {
+            // 更新文件夹（包括排序和父级）
+            runQuery(
+              'UPDATE folders SET name = ?, parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?',
+              [folder.name, folder.parent_id, folder.sort_order, folder.updated_at, folder.id]
+            )
+          }
+        }
+        
+        // 合并标签
+        for (const tag of configData.tags) {
+          const existing = queryOne('SELECT * FROM tags WHERE id = ?', [tag.id])
+          if (!existing) {
+            runQuery(
+              'INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)',
+              [tag.id, tag.name, tag.created_at]
+            )
+          }
+        }
+
+        // 合并设置（如果远程有），目前以远程为准
+        if (configData.settings) {
+          if (configData.settings.darkMode !== undefined) {
+            this.store.set('appearance.darkMode', configData.settings.darkMode)
+          }
+          if (configData.settings.fontSize !== undefined) {
+            this.store.set('appearance.fontSize', configData.settings.fontSize)
+          }
+          if (configData.settings.editorMode !== undefined) {
+            this.store.set('appearance.editorMode', configData.settings.editorMode)
+          }
+          if (configData.settings.autoSave !== undefined) {
+            this.store.set('editor.autoSave', configData.settings.autoSave)
+          }
+        }
       }
       
       // 2. 拉取笔记
@@ -582,21 +745,55 @@ export class GitHubSync {
               if (!existing) {
                 // 新笔记
                 const notebookId = this.findOrCreateNotebook(noteData.notebook_name || 'default')
+                const folderId = this.findFolderIdByName(notebookId, noteData.folder_name)
                 runQuery(
                   `INSERT INTO notes (id, title, content, notebook_id, folder_id, is_pinned, is_deleted, sort_order, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-                  [noteData.id, noteData.title, noteData.content, notebookId, null, noteData.is_pinned || 0, noteData.sort_order || 0, noteData.created_at, noteData.updated_at]
+                  [
+                    noteData.id,
+                    noteData.title,
+                    noteData.content,
+                    notebookId,
+                    folderId,
+                    noteData.is_pinned || 0,
+                    noteData.sort_order || 0,
+                    noteData.created_at,
+                    noteData.updated_at
+                  ]
                 )
                 newNotes++
-              } else if (new Date(noteData.updated_at || '') > new Date(existing.updated_at)) {
-                // 更新笔记（GitHub 版本更新，包括排序和置顶状态）
-                runQuery(
-                  'UPDATE notes SET title = ?, content = ?, is_pinned = ?, sort_order = ?, updated_at = ? WHERE id = ?',
-                  [noteData.title, noteData.content, noteData.is_pinned || 0, noteData.sort_order || existing.sort_order, noteData.updated_at, noteData.id]
-                )
-                updatedNotes++
+              } else {
+                const remoteUpdatedAt = noteData.updated_at
+                const shouldUpdateByTime =
+                  !!remoteUpdatedAt && new Date(remoteUpdatedAt) > new Date(existing.updated_at)
+                const shouldUpdateFolder = !existing.folder_id && noteData.folder_name
+
+                if (shouldUpdateByTime || shouldUpdateFolder) {
+                  const notebookId = existing.notebook_id || this.findOrCreateNotebook(noteData.notebook_name || 'default')
+                  const folderId = noteData.folder_name
+                    ? this.findFolderIdByName(notebookId, noteData.folder_name)
+                    : existing.folder_id || null
+
+                  runQuery(
+                    'UPDATE notes SET title = ?, content = ?, is_pinned = ?, sort_order = ?, folder_id = ?, updated_at = ? WHERE id = ?',
+                    [
+                      noteData.title,
+                      noteData.content,
+                      noteData.is_pinned ?? existing.is_pinned ?? 0,
+                      noteData.sort_order ?? existing.sort_order ?? 0,
+                      folderId,
+                      remoteUpdatedAt || existing.updated_at,
+                      noteData.id
+                    ]
+                  )
+
+                  if (shouldUpdateByTime) {
+                    updatedNotes++
+                  }
+                }
               }
             }
+
           }
         } catch (error) {
           console.error(`Failed to pull note ${file.path}:`, error)
@@ -766,6 +963,117 @@ ${note.content}`
     `) as Note[]
   }
 
+  getConfigConflicts(): ConfigConflicts {
+    return this.store.get('github.configConflicts', {
+      notebooks: [],
+      folders: [],
+      tags: [],
+      settings: []
+    }) as ConfigConflicts
+  }
+
+  async resolveConfigConflicts(payload: {
+    notebooks: { id: string; use: 'local' | 'remote' }[]
+    folders: { id: string; use: 'local' | 'remote' }[]
+    tags: { id: string; use: 'local' | 'remote' }[]
+    settings: { key: string; use: 'local' | 'remote' }[]
+  }): Promise<{ success: boolean }> {
+    const conflicts = this.getConfigConflicts()
+
+    // 1. 处理笔记本冲突
+    for (const item of payload.notebooks || []) {
+      const conflict = conflicts.notebooks.find(c => c.id === item.id)
+      if (!conflict) continue
+
+      if (item.use === 'remote') {
+        const nb = conflict.remote
+        const existing = queryOne('SELECT * FROM notebooks WHERE id = ?', [nb.id])
+        if (existing) {
+          runQuery(
+            'UPDATE notebooks SET name = ?, created_at = ?, updated_at = ? WHERE id = ?',
+            [nb.name, nb.created_at, nb.updated_at, nb.id]
+          )
+        } else {
+          runQuery(
+            'INSERT INTO notebooks (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+            [nb.id, nb.name, nb.created_at, nb.updated_at]
+          )
+        }
+      }
+      // use === 'local' 时，本地已经是期望结果，无需改动数据库
+    }
+
+    // 2. 处理文件夹冲突
+    for (const item of payload.folders || []) {
+      const conflict = conflicts.folders.find(c => c.id === item.id)
+      if (!conflict) continue
+
+      if (item.use === 'remote') {
+        const f = conflict.remote
+        const existing = queryOne('SELECT * FROM folders WHERE id = ?', [f.id])
+        if (existing) {
+          runQuery(
+            'UPDATE folders SET name = ?, notebook_id = ?, parent_id = ?, sort_order = ?, created_at = ?, updated_at = ? WHERE id = ?',
+            [f.name, f.notebook_id, f.parent_id, f.sort_order, f.created_at, f.updated_at, f.id]
+          )
+        } else {
+          runQuery(
+            'INSERT INTO folders (id, name, notebook_id, parent_id, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [f.id, f.name, f.notebook_id, f.parent_id, f.sort_order, f.created_at, f.updated_at]
+          )
+        }
+      }
+    }
+
+    // 3. 处理标签冲突
+    for (const item of payload.tags || []) {
+      const conflict = conflicts.tags.find(c => c.id === item.id)
+      if (!conflict) continue
+
+      if (item.use === 'remote') {
+        const t = conflict.remote
+        const existing = queryOne('SELECT * FROM tags WHERE id = ?', [t.id])
+        if (existing) {
+          runQuery('UPDATE tags SET name = ?, created_at = ? WHERE id = ?', [t.name, t.created_at, t.id])
+        } else {
+          runQuery('INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)', [t.id, t.name, t.created_at])
+        }
+      }
+    }
+
+    // 4. 处理设置冲突
+    for (const item of payload.settings || []) {
+      const conflict = conflicts.settings.find(c => c.key === item.key)
+      if (!conflict) continue
+
+      const value = item.use === 'remote' ? conflict.remoteValue : conflict.localValue
+
+      switch (item.key) {
+        case 'darkMode':
+          this.store.set('appearance.darkMode', value)
+          break
+        case 'fontSize':
+          this.store.set('appearance.fontSize', value)
+          break
+        case 'editorMode':
+          this.store.set('appearance.editorMode', value)
+          break
+        case 'autoSave':
+          this.store.set('editor.autoSave', value)
+          break
+        default:
+          break
+      }
+    }
+
+    // 清理已解决的冲突并同步配置到远程
+    this.store.delete('github.configConflicts')
+    await this.syncConfig()
+    this.updateSyncStatus('success', '配置冲突已解决并同步到 GitHub')
+
+    return { success: true }
+  }
+
   private findOrCreateNotebook(name: string): string {
     const existing = queryOne('SELECT id FROM notebooks WHERE name = ?', [name])
     if (existing) return existing.id
@@ -778,6 +1086,17 @@ ${note.content}`
     )
     return id
   }
+
+  private findFolderIdByName(notebookId: string, folderName?: string | null): string | null {
+    if (!folderName) return null
+
+    const folder = queryOne('SELECT id FROM folders WHERE notebook_id = ? AND name = ?', [
+      notebookId,
+      folderName
+    ])
+    return folder?.id || null
+  }
+
 
   private async getRepoFiles(path: string): Promise<Array<{ name: string; path: string; sha: string }>> {
     if (!this.octokit) return []

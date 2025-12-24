@@ -210,6 +210,147 @@
               </svg>
               {{ pulling ? '拉取中...' : '从 GitHub 拉取' }}
             </button>
+            <button 
+              class="btn btn-secondary" 
+              @click="openConflictResolver" 
+              :disabled="resolvingConflicts"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 3h18v4H3z"/>
+                <path d="M8 11h13v4H8z"/>
+                <path d="M13 19h8v4h-8z"/>
+              </svg>
+              {{ resolvingConflicts ? '处理中...' : '解决配置冲突' }}
+            </button>
+          </div>
+          
+          <!-- 配置冲突列表 -->
+          <div v-if="showConflictResolver && configConflicts" class="conflict-panel">
+            <h3>配置冲突</h3>
+            <p class="conflict-intro">检测到本地与 GitHub 的配置存在差异，请为每一项选择保留本地还是使用远程版本。</p>
+            
+            <div v-if="configConflicts.notebooks.length" class="conflict-group">
+              <h4>笔记本</h4>
+              <table class="conflict-table">
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>本地</th>
+                    <th>远程</th>
+                    <th>选择</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="nb in configConflicts.notebooks" :key="nb.id">
+                    <td>{{ nb.id }}</td>
+                    <td>{{ nb.local.name }}</td>
+                    <td>{{ nb.remote.name }}</td>
+                    <td>
+                      <label class="radio-label">
+                        <input type="radio" :name="'nb-' + nb.id" value="local" v-model="conflictChoices.notebooks[nb.id]"> 本地
+                      </label>
+                      <label class="radio-label">
+                        <input type="radio" :name="'nb-' + nb.id" value="remote" v-model="conflictChoices.notebooks[nb.id]"> 远程
+                      </label>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div v-if="configConflicts.folders.length" class="conflict-group">
+              <h4>目录</h4>
+              <table class="conflict-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>本地名称</th>
+                    <th>远程名称</th>
+                    <th>选择</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="f in configConflicts.folders" :key="f.id">
+                    <td>{{ f.id }}</td>
+                    <td>{{ f.local.name }}</td>
+                    <td>{{ f.remote.name }}</td>
+                    <td>
+                      <label class="radio-label">
+                        <input type="radio" :name="'folder-' + f.id" value="local" v-model="conflictChoices.folders[f.id]"> 本地
+                      </label>
+                      <label class="radio-label">
+                        <input type="radio" :name="'folder-' + f.id" value="remote" v-model="conflictChoices.folders[f.id]"> 远程
+                      </label>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div v-if="configConflicts.tags.length" class="conflict-group">
+              <h4>标签</h4>
+              <table class="conflict-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>本地名称</th>
+                    <th>远程名称</th>
+                    <th>选择</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="t in configConflicts.tags" :key="t.id">
+                    <td>{{ t.id }}</td>
+                    <td>{{ t.local.name }}</td>
+                    <td>{{ t.remote.name }}</td>
+                    <td>
+                      <label class="radio-label">
+                        <input type="radio" :name="'tag-' + t.id" value="local" v-model="conflictChoices.tags[t.id]"> 本地
+                      </label>
+                      <label class="radio-label">
+                        <input type="radio" :name="'tag-' + t.id" value="remote" v-model="conflictChoices.tags[t.id]"> 远程
+                      </label>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div v-if="configConflicts.settings.length" class="conflict-group">
+              <h4>设置</h4>
+              <table class="conflict-table">
+                <thead>
+                  <tr>
+                    <th>键</th>
+                    <th>本地值</th>
+                    <th>远程值</th>
+                    <th>选择</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="s in configConflicts.settings" :key="s.key">
+                    <td>{{ s.key }}</td>
+                    <td>{{ String(s.localValue) }}</td>
+                    <td>{{ String(s.remoteValue) }}</td>
+                    <td>
+                      <label class="radio-label">
+                        <input type="radio" :name="'setting-' + s.key" value="local" v-model="conflictChoices.settings[s.key]"> 本地
+                      </label>
+                      <label class="radio-label">
+                        <input type="radio" :name="'setting-' + s.key" value="remote" v-model="conflictChoices.settings[s.key]"> 远程
+                      </label>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="conflict-actions">
+              <button class="btn btn-primary" @click="applyConflictResolution" :disabled="resolvingConflicts">
+                {{ resolvingConflicts ? '应用中...' : '应用选择并同步' }}
+              </button>
+              <button class="btn btn-ghost" @click="closeConflictResolver" :disabled="resolvingConflicts">关闭</button>
+            </div>
           </div>
           
           <!-- 仓库信息 -->
@@ -325,6 +466,13 @@ interface SyncStatus {
   syncInterval: number
 }
 
+interface ConfigConflicts {
+  notebooks: Array<{ id: string; local: any; remote: any }>
+  folders: Array<{ id: string; local: any; remote: any }>
+  tags: Array<{ id: string; local: any; remote: any }>
+  settings: Array<{ key: string; localValue: any; remoteValue: any }>
+}
+
 const githubUser = ref<GitHubUser | null>(null)
 const syncStatus = ref<SyncStatus>({
   lastSync: null,
@@ -340,7 +488,19 @@ const loggingIn = ref(false)
 const loginError = ref('')
 const pulling = ref(false)
 
+// 冲突解决状态
+const showConflictResolver = ref(false)
+const resolvingConflicts = ref(false)
+const configConflicts = ref<ConfigConflicts | null>(null)
+const conflictChoices = ref({
+  notebooks: {} as Record<string, 'local' | 'remote'>,
+  folders: {} as Record<string, 'local' | 'remote'>,
+  tags: {} as Record<string, 'local' | 'remote'>,
+  settings: {} as Record<string, 'local' | 'remote'>
+})
+
 let statusPollTimer: number | null = null
+
 
 onMounted(async () => {
   await settingsStore.loadSettings()
@@ -542,6 +702,77 @@ async function handleSyncIntervalChange() {
     await globalModal.alert(`设置失败: ${error.message}`, '错误')
   }
 }
+
+async function openConflictResolver() {
+  resolvingConflicts.value = true
+  try {
+    const conflicts = await window.electronAPI.github.getConfigConflicts()
+    if (!conflicts || (
+      conflicts.notebooks.length === 0 &&
+      conflicts.folders.length === 0 &&
+      conflicts.tags.length === 0 &&
+      conflicts.settings.length === 0
+    )) {
+      await globalModal.success('当前没有需要解决的配置冲突')
+      return
+    }
+
+    configConflicts.value = conflicts
+    conflictChoices.value = {
+      notebooks: Object.fromEntries(conflicts.notebooks.map(c => [c.id, 'remote'] as const)),
+      folders: Object.fromEntries(conflicts.folders.map(c => [c.id, 'remote'] as const)),
+      tags: Object.fromEntries(conflicts.tags.map(c => [c.id, 'remote'] as const)),
+      settings: Object.fromEntries(conflicts.settings.map(c => [c.key, 'remote'] as const))
+    }
+    showConflictResolver.value = true
+  } catch (error: any) {
+    await globalModal.alert(`获取冲突信息失败: ${error.message}`, '错误')
+  } finally {
+    resolvingConflicts.value = false
+  }
+}
+
+function closeConflictResolver() {
+  showConflictResolver.value = false
+}
+
+async function applyConflictResolution() {
+  if (!configConflicts.value) return
+  resolvingConflicts.value = true
+
+  try {
+    const payload = {
+      notebooks: configConflicts.value.notebooks.map(c => ({
+        id: c.id,
+        use: conflictChoices.value.notebooks[c.id] || 'remote'
+      })),
+      folders: configConflicts.value.folders.map(c => ({
+        id: c.id,
+        use: conflictChoices.value.folders[c.id] || 'remote'
+      })),
+      tags: configConflicts.value.tags.map(c => ({
+        id: c.id,
+        use: conflictChoices.value.tags[c.id] || 'remote'
+      })),
+      settings: configConflicts.value.settings.map(c => ({
+        key: c.key,
+        use: conflictChoices.value.settings[c.key] || 'remote'
+      }))
+    }
+
+    await window.electronAPI.github.resolveConfigConflicts(payload)
+    await globalModal.success('配置冲突已解决并同步到 GitHub', '操作成功')
+
+    showConflictResolver.value = false
+    configConflicts.value = null
+    await loadGitHubStatus()
+  } catch (error: any) {
+    await globalModal.alert(`应用冲突解决方案失败: ${error.message}`, '错误')
+  } finally {
+    resolvingConflicts.value = false
+  }
+}
+
 </script>
 
 <style lang="scss" scoped>

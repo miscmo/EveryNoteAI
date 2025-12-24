@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sync: () => ipcRenderer.invoke('github:sync'),
     pull: () => ipcRenderer.invoke('github:pull'),
     getSyncStatus: () => ipcRenderer.invoke('github:getSyncStatus'),
+    getConfigConflicts: () => ipcRenderer.invoke('github:getConfigConflicts'),
+    resolveConfigConflicts: (payload: any) => ipcRenderer.invoke('github:resolveConfigConflicts', payload),
     
     // 自动同步设置
     startAutoSync: () => ipcRenderer.invoke('github:startAutoSync'),
@@ -155,6 +157,8 @@ export interface ElectronAPI {
     sync: () => Promise<SyncResult>
     pull: () => Promise<PullResult>
     getSyncStatus: () => Promise<SyncStatus>
+    getConfigConflicts: () => Promise<ConfigConflicts>
+    resolveConfigConflicts: (payload: any) => Promise<{ success: boolean }>
     
     // 自动同步设置
     startAutoSync: () => Promise<void>
@@ -221,8 +225,16 @@ interface SyncResult {
 interface PullResult {
   success: boolean
   message: string
-  pulledFiles: number
-  conflicts: string[]
+  pulledNotes: number
+  newNotes: number
+  updatedNotes: number
+}
+
+interface ConfigConflicts {
+  notebooks: Array<{ id: string; local: Notebook; remote: Notebook }>
+  folders: Array<{ id: string; local: Folder; remote: Folder }>
+  tags: Array<{ id: string; local: Tag; remote: Tag }>
+  settings: Array<{ key: string; localValue: any; remoteValue: any }>
 }
 
 interface SyncStatus {

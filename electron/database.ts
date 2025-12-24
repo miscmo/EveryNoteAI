@@ -95,17 +95,21 @@ export async function initDatabase(): Promise<void> {
     )
   `)
   
-  // Check if notes table needs migration (add new columns)
+  // Check if notes table exists and needs migration (add new columns)
   const tableInfo = db.exec("PRAGMA table_info(notes)")
-  const columns = tableInfo[0]?.values.map((row: any) => row[1]) || []
+  if (tableInfo.length > 0) {
+    const columns = tableInfo[0]?.values.map((row: any) => row[1]) || []
   
-  if (!columns.includes('folder_id')) {
-    console.log('Migrating notes table: adding folder_id column')
-    db.run('ALTER TABLE notes ADD COLUMN folder_id TEXT')
-  }
-  if (!columns.includes('sort_order')) {
-    console.log('Migrating notes table: adding sort_order column')
-    db.run('ALTER TABLE notes ADD COLUMN sort_order INTEGER DEFAULT 0')
+    if (!columns.includes('folder_id')) {
+      console.log('Migrating notes table: adding folder_id column')
+      db.run('ALTER TABLE notes ADD COLUMN folder_id TEXT')
+    }
+    if (!columns.includes('sort_order')) {
+      console.log('Migrating notes table: adding sort_order column')
+      db.run('ALTER TABLE notes ADD COLUMN sort_order INTEGER DEFAULT 0')
+    }
+  } else {
+    console.log('Notes table does not exist yet, skipping migration')
   }
   
   // Create notes table if it doesn't exist (for new databases)

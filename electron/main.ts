@@ -4,7 +4,7 @@
  * @module electron/main
  */
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, Menu } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { initDatabase, queryAll, queryOne, runQuery, saveDatabase, closeDatabase } from './database'
@@ -41,8 +41,8 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false
     },
-    titleBarStyle: 'hiddenInset',
-    frame: process.platform === 'darwin' ? true : false,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    frame: true,
     show: false
   })
 
@@ -70,6 +70,9 @@ function createWindow() {
  */
 app.whenReady().then(async () => {
   store = new SimpleStore()
+  if (process.platform === 'win32') {
+    Menu.setApplicationMenu(null)
+  }
   await initDatabase()
   githubSync = new GitHubSync(store)
   aiService = new AIService(store)
@@ -715,6 +718,22 @@ ipcMain.handle('github:sync', async () => {
 ipcMain.handle('github:pull', async () => {
   if (!githubSync) throw new Error('GitHub sync not initialized')
   return githubSync.pullFromGitHub()
+})
+
+/**
+ * 获取配置冲突信息
+ */
+ipcMain.handle('github:getConfigConflicts', async () => {
+  if (!githubSync) throw new Error('GitHub sync not initialized')
+  return githubSync.getConfigConflicts()
+})
+
+/**
+ * 解决配置冲突
+ */
+ipcMain.handle('github:resolveConfigConflicts', async (_, payload) => {
+  if (!githubSync) throw new Error('GitHub sync not initialized')
+  return githubSync.resolveConfigConflicts(payload)
 })
 
 /**
