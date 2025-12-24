@@ -84,13 +84,26 @@
         <div class="view-toggle">
           <button 
             class="toggle-btn" 
-            :class="{ active: viewMode === 'edit' }"
-            @click="viewMode = 'edit'"
-            title="编辑模式"
+            :class="{ active: viewMode === 'wysiwyg' }"
+            @click="viewMode = 'wysiwyg'"
+            title="所见即所得"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+              <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+              <path d="M2 2l7.586 7.586"/>
+              <circle cx="11" cy="11" r="2"/>
+            </svg>
+          </button>
+          <button 
+            class="toggle-btn" 
+            :class="{ active: viewMode === 'source' }"
+            @click="viewMode = 'source'"
+            title="源码模式"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 18 22 12 16 6"/>
+              <polyline points="8 6 2 12 8 18"/>
             </svg>
           </button>
           <button 
@@ -102,17 +115,6 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
               <line x1="12" y1="3" x2="12" y2="21"/>
-            </svg>
-          </button>
-          <button 
-            class="toggle-btn" 
-            :class="{ active: viewMode === 'preview' }"
-            @click="viewMode = 'preview'"
-            title="预览模式"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-              <circle cx="12" cy="12" r="3"/>
             </svg>
           </button>
         </div>
@@ -138,8 +140,17 @@
     
     <!-- Editor Body -->
     <div class="editor-body" :class="viewMode">
-      <!-- Edit Panel -->
-      <div v-if="viewMode !== 'preview'" class="edit-panel">
+      <!-- WYSIWYG Mode (Milkdown) -->
+      <div v-if="viewMode === 'wysiwyg'" class="wysiwyg-panel">
+        <MilkdownEditor 
+          :key="editorKey"
+          v-model="content"
+          @update:modelValue="handleContentChange"
+        />
+      </div>
+      
+      <!-- Source Mode -->
+      <div v-if="viewMode === 'source'" class="edit-panel">
         <textarea
           ref="textareaRef"
           v-model="content"
@@ -150,21 +161,34 @@
         ></textarea>
       </div>
       
-      <!-- Preview Panel -->
-      <div v-if="viewMode !== 'edit'" class="preview-panel">
-        <div class="markdown-body" v-html="renderedContent"></div>
-      </div>
+      <!-- Split Mode -->
+      <template v-if="viewMode === 'split'">
+        <div class="edit-panel">
+          <textarea
+            ref="textareaRef"
+            v-model="content"
+            class="editor-textarea"
+            placeholder="开始写作..."
+            @input="handleContentChange"
+            @keydown.tab.prevent="handleTab"
+          ></textarea>
+        </div>
+        <div class="preview-panel">
+          <div class="markdown-body" v-html="renderedContent"></div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useDebounceFn, onClickOutside } from '@vueuse/core'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import type { Note } from '@/stores/notes'
 import { useSettingsStore } from '@/stores/settings'
+import MilkdownEditor from './MilkdownEditor.vue'
 
 interface Props {
   note: Note
@@ -183,10 +207,11 @@ const settingsStore = useSettingsStore()
 
 const title = ref(props.note.title)
 const content = ref(props.note.content)
-const viewMode = computed({
-  get: () => settingsStore.editorMode,
-  set: (value: 'edit' | 'split' | 'preview') => settingsStore.setEditorMode(value)
-})
+const editorKey = ref(0) // Used to force re-render Milkdown when note changes
+
+// View mode: wysiwyg (default), source, split
+const viewMode = ref<'wysiwyg' | 'source' | 'split'>('wysiwyg')
+
 const showAIDropdown = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const aiDropdownRef = ref<HTMLElement | null>(null)
@@ -224,6 +249,8 @@ const noteTags = computed(() => {
 watch(() => props.note.id, () => {
   title.value = props.note.title
   content.value = props.note.content
+  // Force re-render Milkdown editor
+  editorKey.value++
 })
 
 // Debounced update
@@ -458,7 +485,16 @@ onClickOutside(aiDropdownRef, () => {
   display: flex;
   overflow: hidden;
   
-  &.edit {
+  &.wysiwyg {
+    .wysiwyg-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+  }
+  
+  &.source {
     .edit-panel {
       flex: 1;
     }
@@ -474,12 +510,11 @@ onClickOutside(aiDropdownRef, () => {
       border-left: 1px solid var(--border-light);
     }
   }
-  
-  &.preview {
-    .preview-panel {
-      flex: 1;
-    }
-  }
+}
+
+.wysiwyg-panel {
+  display: flex;
+  flex-direction: column;
 }
 
 .edit-panel {

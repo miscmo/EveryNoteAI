@@ -12,12 +12,23 @@
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
+    "@milkdown/core": "^7.17.3",
+    "@milkdown/ctx": "^7.17.3",
+    "@milkdown/plugin-history": "^7.17.3",
+    "@milkdown/plugin-listener": "^7.17.3",
+    "@milkdown/plugin-prism": "^7.17.3",
+    "@milkdown/preset-commonmark": "^7.17.3",
+    "@milkdown/preset-gfm": "^7.17.3",
+    "@milkdown/prose": "^7.17.3",
+    "@milkdown/theme-nord": "^7.17.3",
     "@octokit/rest": "^20.0.2",
+    "@types/prismjs": "^1.26.5",
     "@vueuse/core": "^10.7.0",
     "highlight.js": "^11.9.0",
     "lodash-es": "^4.17.21",
     "marked": "^11.1.0",
     "pinia": "^2.1.7",
+    "prismjs": "^1.30.0",
     "sql.js": "^1.10.0",
     "vue": "^3.4.0",
     "vue-router": "^4.2.5"
