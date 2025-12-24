@@ -1,33 +1,19 @@
 <template>
-  <div ref="editorRef" class="milkdown-editor"></div>
+  <div ref="editorRef" class="milkdown-editor">
+    <div v-if="error" class="editor-error">
+      编辑器加载失败: {{ error }}
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/core'
 import { commonmark } from '@milkdown/preset-commonmark'
 import { gfm } from '@milkdown/preset-gfm'
 import { history } from '@milkdown/plugin-history'
 import { listener, listenerCtx } from '@milkdown/plugin-listener'
 import { nord } from '@milkdown/theme-nord'
-import { prism, prismConfig } from '@milkdown/plugin-prism'
-import { replaceAll, getMarkdown } from '@milkdown/utils'
-
-// Prism languages
-import 'prismjs/components/prism-javascript'
-import 'prismjs/components/prism-typescript'
-import 'prismjs/components/prism-jsx'
-import 'prismjs/components/prism-tsx'
-import 'prismjs/components/prism-css'
-import 'prismjs/components/prism-python'
-import 'prismjs/components/prism-java'
-import 'prismjs/components/prism-go'
-import 'prismjs/components/prism-rust'
-import 'prismjs/components/prism-bash'
-import 'prismjs/components/prism-json'
-import 'prismjs/components/prism-yaml'
-import 'prismjs/components/prism-markdown'
-import 'prismjs/components/prism-sql'
 
 interface Props {
   modelValue: string
@@ -40,38 +26,41 @@ const emit = defineEmits<{
 }>()
 
 const editorRef = ref<HTMLElement | null>(null)
+const error = ref<string | null>(null)
 let editor: Editor | null = null
-let isInternalUpdate = false
 
 async function createEditor(initialValue: string) {
   if (!editorRef.value) return null
   
-  return await Editor.make()
-    .config((ctx) => {
-      ctx.set(rootCtx, editorRef.value!)
-      ctx.set(defaultValueCtx, initialValue || '')
-      ctx.set(editorViewOptionsCtx, {
-        attributes: {
-          class: 'milkdown-editor-content',
-          spellcheck: 'false'
-        }
-      })
-      ctx.set(prismConfig.key, {
-        configureRefractor: () => {}
-      })
-      ctx.get(listenerCtx).markdownUpdated((_, markdown) => {
-        if (!isInternalUpdate) {
+  try {
+    const ed = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, editorRef.value!)
+        ctx.set(defaultValueCtx, initialValue || '')
+        ctx.set(editorViewOptionsCtx, {
+          attributes: {
+            class: 'milkdown-editor-content',
+            spellcheck: 'false'
+          }
+        })
+        ctx.get(listenerCtx).markdownUpdated((_, markdown) => {
           emit('update:modelValue', markdown)
-        }
+        })
       })
-    })
-    .config(nord)
-    .use(commonmark)
-    .use(gfm)
-    .use(history)
-    .use(listener)
-    .use(prism)
-    .create()
+      .config(nord)
+      .use(commonmark)
+      .use(gfm)
+      .use(history)
+      .use(listener)
+      .create()
+    
+    error.value = null
+    return ed
+  } catch (e) {
+    console.error('Milkdown editor creation failed:', e)
+    error.value = String(e)
+    return null
+  }
 }
 
 onMounted(async () => {
@@ -81,7 +70,11 @@ onMounted(async () => {
 // Expose method to reset content (called when note changes via key)
 async function resetContent(newContent: string) {
   if (editor) {
-    editor.destroy()
+    try {
+      editor.destroy()
+    } catch (e) {
+      console.error('Error destroying editor:', e)
+    }
   }
   await nextTick()
   editor = await createEditor(newContent)
@@ -90,7 +83,11 @@ async function resetContent(newContent: string) {
 defineExpose({ resetContent })
 
 onUnmounted(() => {
-  editor?.destroy()
+  try {
+    editor?.destroy()
+  } catch (e) {
+    console.error('Error destroying editor on unmount:', e)
+  }
   editor = null
 })
 </script>
@@ -99,6 +96,14 @@ onUnmounted(() => {
 .milkdown-editor {
   flex: 1;
   overflow-y: auto;
+  
+  .editor-error {
+    padding: 20px;
+    color: var(--error, #ef4444);
+    background: var(--bg-secondary, #f5f5f5);
+    border-radius: 8px;
+    margin: 20px;
+  }
   
   .milkdown-editor-content {
     outline: none;
