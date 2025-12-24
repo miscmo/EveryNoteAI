@@ -84,15 +84,15 @@
         <div class="view-toggle">
           <button 
             class="toggle-btn" 
-            :class="{ active: viewMode === 'wysiwyg' }"
-            @click="viewMode = 'wysiwyg'"
-            title="所见即所得"
+            :class="{ active: viewMode === 'block' }"
+            @click="viewMode = 'block'"
+            title="块编辑器"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 19l7-7 3 3-7 7-3-3z"/>
-              <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
-              <path d="M2 2l7.586 7.586"/>
-              <circle cx="11" cy="11" r="2"/>
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/>
             </svg>
           </button>
           <button 
@@ -140,9 +140,9 @@
     
     <!-- Editor Body -->
     <div class="editor-body" :class="viewMode">
-      <!-- WYSIWYG Mode (Milkdown) -->
-      <div v-if="viewMode === 'wysiwyg'" class="wysiwyg-panel">
-        <MilkdownEditor 
+      <!-- Block Editor Mode (TipTap) -->
+      <div v-if="viewMode === 'block'" class="block-panel">
+        <BlockEditor 
           :key="editorKey"
           v-model="content"
           @update:modelValue="handleContentChange"
@@ -188,7 +188,7 @@ import { marked } from 'marked'
 import hljs from 'highlight.js'
 import type { Note } from '@/stores/notes'
 import { useSettingsStore } from '@/stores/settings'
-import MilkdownEditor from './MilkdownEditor.vue'
+import BlockEditor from './BlockEditor.vue'
 
 interface Props {
   note: Note
@@ -207,10 +207,10 @@ const settingsStore = useSettingsStore()
 
 const title = ref(props.note.title)
 const content = ref(props.note.content)
-const editorKey = ref(0) // Used to force re-render Milkdown when note changes
+const editorKey = ref(0) // Used to force re-render editor when note changes
 
-// View mode: wysiwyg (default), source, split
-const viewMode = ref<'wysiwyg' | 'source' | 'split'>('wysiwyg')
+// View mode: block (default), source, split
+const viewMode = ref<'block' | 'source' | 'split'>('block')
 
 const showAIDropdown = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -249,7 +249,7 @@ const noteTags = computed(() => {
 watch(() => props.note.id, () => {
   title.value = props.note.title
   content.value = props.note.content
-  // Force re-render Milkdown editor
+  // Force re-render editor
   editorKey.value++
 })
 
@@ -485,8 +485,8 @@ onClickOutside(aiDropdownRef, () => {
   display: flex;
   overflow: hidden;
   
-  &.wysiwyg {
-    .wysiwyg-panel {
+  &.block {
+    .block-panel {
       flex: 1;
       display: flex;
       flex-direction: column;
@@ -512,7 +512,7 @@ onClickOutside(aiDropdownRef, () => {
   }
 }
 
-.wysiwyg-panel {
+.block-panel {
   display: flex;
   flex-direction: column;
 }
