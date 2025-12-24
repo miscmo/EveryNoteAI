@@ -2,6 +2,7 @@
   "name": "ai-note-assistant",
   "version": "1.0.0",
   "description": "AI-powered cross-platform note-taking application with GitHub sync",
+  "author": "miscmo",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -45,7 +46,7 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
-    "icon": "build/icon.svg",
+    "icon": "build/icon.png",
     "mac": {
       "target": [
         "dmg",
