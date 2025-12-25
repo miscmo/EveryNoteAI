@@ -1,23 +1,34 @@
-import { ref, reactive } from 'vue'
+import { reactive } from 'vue'
 
 export interface ModalOptions {
   title?: string
   message: string
-  type?: 'default' | 'confirm' | 'warning' | 'danger' | 'success' | 'info'
+  type?: 'default' | 'confirm' | 'warning' | 'danger' | 'success' | 'info' | 'prompt'
   confirmText?: string
   cancelText?: string
   showCancel?: boolean
+  // Prompt specific options
+  inputLabel?: string
+  inputPlaceholder?: string
+  inputType?: string
+  inputDefaultValue?: string
+  inputValidator?: (value: string) => string | null
 }
 
 interface ModalState {
   visible: boolean
   title?: string
   message: string
-  type: 'default' | 'confirm' | 'warning' | 'danger' | 'success' | 'info'
+  type: 'default' | 'confirm' | 'warning' | 'danger' | 'success' | 'info' | 'prompt'
   confirmText: string
   cancelText: string
   showCancel: boolean
-  resolve: ((value: boolean) => void) | null
+  inputLabel?: string
+  inputPlaceholder?: string
+  inputType?: string
+  inputDefaultValue?: string
+  inputValidator?: (value: string) => string | null
+  resolve: ((value: boolean | string | null) => void) | null
 }
 
 const modalState = reactive<ModalState>({
@@ -28,6 +39,11 @@ const modalState = reactive<ModalState>({
   confirmText: '确定',
   cancelText: '取消',
   showCancel: true,
+  inputLabel: undefined,
+  inputPlaceholder: '',
+  inputType: 'text',
+  inputDefaultValue: '',
+  inputValidator: undefined,
   resolve: null
 })
 
@@ -41,7 +57,12 @@ export function useModal() {
       modalState.confirmText = options.confirmText || '确定'
       modalState.cancelText = options.cancelText || '取消'
       modalState.showCancel = options.showCancel !== false
-      modalState.resolve = resolve
+      modalState.inputLabel = options.inputLabel
+      modalState.inputPlaceholder = options.inputPlaceholder || ''
+      modalState.inputType = options.inputType || 'text'
+      modalState.inputDefaultValue = options.inputDefaultValue || ''
+      modalState.inputValidator = options.inputValidator
+      modalState.resolve = resolve as (value: boolean | string | null) => void
     })
   }
 
@@ -90,21 +111,63 @@ export function useModal() {
     })
   }
 
-  function handleConfirm() {
+  /**
+   * Show a prompt modal to get user input
+   * @returns The input value if confirmed, null if cancelled
+   */
+  function prompt(options: {
+    title?: string
+    message?: string
+    label?: string
+    placeholder?: string
+    type?: string
+    defaultValue?: string
+    validator?: (value: string) => string | null
+  }): Promise<string | null> {
+    return new Promise((resolve) => {
+      modalState.visible = true
+      modalState.title = options.title || '输入'
+      modalState.message = options.message || ''
+      modalState.type = 'prompt'
+      modalState.confirmText = '确定'
+      modalState.cancelText = '取消'
+      modalState.showCancel = true
+      modalState.inputLabel = options.label
+      modalState.inputPlaceholder = options.placeholder || ''
+      modalState.inputType = options.type || 'text'
+      modalState.inputDefaultValue = options.defaultValue || ''
+      modalState.inputValidator = options.validator
+      modalState.resolve = resolve as (value: boolean | string | null) => void
+    })
+  }
+
+  function handleConfirm(value?: string) {
     modalState.visible = false
-    modalState.resolve?.(true)
+    if (modalState.type === 'prompt') {
+      modalState.resolve?.(value ?? null)
+    } else {
+      modalState.resolve?.(true)
+    }
     modalState.resolve = null
   }
 
   function handleCancel() {
     modalState.visible = false
-    modalState.resolve?.(false)
+    if (modalState.type === 'prompt') {
+      modalState.resolve?.(null)
+    } else {
+      modalState.resolve?.(false)
+    }
     modalState.resolve = null
   }
 
   function handleClose() {
     modalState.visible = false
-    modalState.resolve?.(false)
+    if (modalState.type === 'prompt') {
+      modalState.resolve?.(null)
+    } else {
+      modalState.resolve?.(false)
+    }
     modalState.resolve = null
   }
 
@@ -116,6 +179,7 @@ export function useModal() {
     warning,
     danger,
     success,
+    prompt,
     handleConfirm,
     handleCancel,
     handleClose
@@ -131,6 +195,7 @@ export const globalModal = {
   warning: modalInstance.warning,
   danger: modalInstance.danger,
   success: modalInstance.success,
+  prompt: modalInstance.prompt,
   state: modalInstance.modalState,
   handleConfirm: modalInstance.handleConfirm,
   handleCancel: modalInstance.handleCancel,
